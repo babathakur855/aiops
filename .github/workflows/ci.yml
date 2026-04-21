@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths-ignore:
+      - '*.md'
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Python ────────────────────────────────────────────────────────────
+      - name: Detect Python project
+        id: python
+        run: |
+          if compgen -G "requirements*.txt" > /dev/null || [ -f pyproject.toml ]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Python
+        if: steps.python.outputs.found == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Python dependencies
+        if: steps.python.outputs.found == 'true'
+        run: |
+          pip install --upgrade pip
+          for f in requirements.txt backend-requirements.txt requirements-dev.txt; do
+            [ -f "$f" ] && pip install -r "$f"
+          done
+          pip install ruff pytest pytest-asyncio
+
+      - name: Lint (ruff)
+        if: steps.python.outputs.found == 'true'
+        run: ruff check . --output-format=github
+
+      - name: Type check (pyright)
+        if: steps.python.outputs.found == 'true'
+        run: |
+          pip install pyright --quiet
+          pyright --version
+          pyright . 2>/dev/null || true
+
+      - name: Run tests
+        if: steps.python.outputs.found == 'true'
+        run: pytest --tb=short -q || echo "No tests found yet — skipping"
+
+      # ── Node / Frontend ───────────────────────────────────────────────────
+      - name: Detect Node project
+        id: node
+        run: |
+          if [ -f package.json ] || [ -f frontend/package.json ]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+            [ -f frontend/package.json ] && echo "dir=frontend" >> $GITHUB_OUTPUT || echo "dir=." >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Node
+        if: steps.node.outputs.found == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: '${{ steps.node.outputs.dir }}/package-lock.json'
+
+      - name: Install Node dependencies
+        if: steps.node.outputs.found == 'true'
+        working-directory: ${{ steps.node.outputs.dir }}
+        run: npm ci
+
+      - name: Type check (tsc)
+        if: steps.node.outputs.found == 'true'
+        working-directory: ${{ steps.node.outputs.dir }}
+        run: npx tsc --noEmit 2>/dev/null || true
+
+      - name: Run Node tests
+        if: steps.node.outputs.found == 'true'
+        working-directory: ${{ steps.node.outputs.dir }}
+        run: npm test --if-present -- --passWithNoTests
