@@ -1,0 +1,179 @@
+# ================================================================
+# OpsBrain — Master Helm values
+# Override per environment: values.aws.yaml / values.azure.yaml / values.onprem.yaml
+# ================================================================
+
+global:
+  imageRegistry: ""        # e.g. myregistry.azurecr.io  — leave empty for Docker Hub
+  imagePullSecrets: []
+  storageClass: ""
+
+# ── Replica counts ────────────────────────────────────────────────
+replicaCount:
+  backend: 2
+  frontend: 2
+
+# ── Container images ──────────────────────────────────────────────
+image:
+  backend:
+    repository: opsbrain/backend
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: opsbrain/frontend
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+# ── Service ports ─────────────────────────────────────────────────
+service:
+  backend:
+    type: ClusterIP
+    port: 8010
+  frontend:
+    type: ClusterIP
+    port: 3010
+
+# ── Ingress ───────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: nginx              # nginx | alb (AWS) | agic (Azure) | haproxy (OpenShift)
+  annotations: {}
+  hosts:
+    - host: opsbrain.internal   # Change to your internal DNS
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend: backend
+        - path: /
+          pathType: Prefix
+          backend: frontend
+  tls: []
+  # tls:
+  #   - secretName: opsbrain-tls
+  #     hosts:
+  #       - opsbrain.internal
+
+# ── LLM Provider ──────────────────────────────────────────────────
+llm:
+  provider: anthropic           # anthropic | azure_openai | aws_bedrock | ollama
+
+  anthropic:
+    apiKey: ""                  # or use existingSecret
+    model: claude-sonnet-4-6
+
+  azureOpenAI:
+    apiKey: ""
+    endpoint: ""                # https://<resource>.openai.azure.com/
+    deployment: gpt-4o
+    apiVersion: "2024-02-01"
+
+  awsBedrock:
+    region: us-east-1
+    modelId: anthropic.claude-3-5-sonnet-20241022-v2:0
+    # Uses pod IAM role — no static credentials needed
+
+  ollama:
+    baseUrl: http://ollama:11434
+    model: llama3.1:70b
+
+# ── Auth ──────────────────────────────────────────────────────────
+auth:
+  jwtSecretKey: ""              # Required — generate with: openssl rand -hex 32
+  jwtExpireMinutes: 480
+  existingSecret: ""            # Use existing k8s secret instead of values
+
+# ── App config ────────────────────────────────────────────────────
+app:
+  env: production
+  corsOrigins: '["https://opsbrain.internal"]'
+  logLevel: INFO
+
+# ── Connectors (optional — can also be configured at runtime via UI) ──
+connectors:
+  serviceNow:
+    enabled: false
+    instanceUrl: ""
+    username: ""
+    password: ""
+
+  confluence:
+    enabled: false
+    baseUrl: ""
+    username: ""
+    apiToken: ""
+
+  dynatrace:
+    enabled: false
+    baseUrl: ""
+    apiToken: ""
+
+  elasticsearch:
+    enabled: false
+    url: ""
+    apiKey: ""
+
+  slack:
+    enabled: false
+    webhookUrl: ""
+    botToken: ""
+
+  teams:
+    enabled: false
+    webhookUrl: ""
+
+  email:
+    enabled: false
+    host: ""
+    port: 587
+    username: ""
+    password: ""
+    fromEmail: ""
+
+# ── Resources ─────────────────────────────────────────────────────
+resources:
+  backend:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  frontend:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ── Autoscaling ───────────────────────────────────────────────────
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+# ── Pod security ──────────────────────────────────────────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 2000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: [ALL]
+
+# ── Service account ───────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: opsbrain
+  annotations: {}
+  # AWS IRSA:  eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/opsbrain
+  # Azure WI:  azure.workload.identity/client-id: <client-id>
+
+# ── Node placement ────────────────────────────────────────────────
+nodeSelector: {}
+tolerations: []
+affinity: {}

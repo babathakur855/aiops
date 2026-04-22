@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: opsbrain-collector
+    opsbrain.io/component: collector
+spec:
+  selector:
+    matchLabels:
+      app: opsbrain-collector
+  template:
+    metadata:
+      labels:
+        app: opsbrain-collector
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/otel-config.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      hostNetwork: false
+      dnsPolicy: ClusterFirst
+
+      tolerations:
+        # Run on all nodes including control-plane
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+
+      containers:
+        - name: collector
+          image: otel/opentelemetry-collector-contrib:0.97.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /otelcol-contrib
+            - --config=/conf/config.yaml
+          env:
+            - name: K8S_NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          ports:
+            - containerPort: 13133  # health check
+            - containerPort: 4317   # OTLP gRPC
+            - containerPort: 4318   # OTLP HTTP
+            - containerPort: 8888   # Prometheus self-metrics
+
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-otel-config
+        - name: varlog
+          hostPath:
+            path: /var/log
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001

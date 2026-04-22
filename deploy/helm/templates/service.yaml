@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opsbrain.fullname" . }}-backend
+spec:
+  type: {{ .Values.service.backend.type }}
+  selector:
+    app: opsbrain-backend
+  ports:
+    - port: {{ .Values.service.backend.port }}
+      targetPort: 8010
+      protocol: TCP
+      name: http
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opsbrain.fullname" . }}-frontend
+spec:
+  type: {{ .Values.service.frontend.type }}
+  selector:
+    app: opsbrain-frontend
+  ports:
+    - port: {{ .Values.service.frontend.port }}
+      targetPort: 3010
+      protocol: TCP
+      name: http

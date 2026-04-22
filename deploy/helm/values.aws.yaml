@@ -1,0 +1,26 @@
+# ================================================================
+# OpsBrain — AWS overrides (EKS / ROSA)
+# Usage: helm install opsbrain ./helm -f values.yaml -f values.aws.yaml
+# ================================================================
+
+llm:
+  provider: aws_bedrock
+  awsBedrock:
+    region: us-east-1
+    modelId: anthropic.claude-3-5-sonnet-20241022-v2:0
+
+ingress:
+  className: alb
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/opsbrain-role
+
+global:
+  storageClass: gp3

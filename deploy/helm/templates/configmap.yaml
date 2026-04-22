@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "opsbrain.fullname" . }}-config
+data:
+  APP_ENV: {{ .Values.app.env | quote }}
+  LLM_PROVIDER: {{ .Values.llm.provider | quote }}
+  ANTHROPIC_MODEL: {{ .Values.llm.anthropic.model | quote }}
+  AZURE_OPENAI_ENDPOINT: {{ .Values.llm.azureOpenAI.endpoint | quote }}
+  AZURE_OPENAI_DEPLOYMENT: {{ .Values.llm.azureOpenAI.deployment | quote }}
+  AZURE_OPENAI_API_VERSION: {{ .Values.llm.azureOpenAI.apiVersion | quote }}
+  AWS_BEDROCK_REGION: {{ .Values.llm.awsBedrock.region | quote }}
+  AWS_BEDROCK_MODEL_ID: {{ .Values.llm.awsBedrock.modelId | quote }}
+  OLLAMA_BASE_URL: {{ .Values.llm.ollama.baseUrl | quote }}
+  OLLAMA_MODEL: {{ .Values.llm.ollama.model | quote }}
+  JWT_EXPIRE_MINUTES: {{ .Values.auth.jwtExpireMinutes | quote }}
+  CORS_ORIGINS: {{ .Values.app.corsOrigins | quote }}
+  {{- if .Values.connectors.serviceNow.enabled }}
+  SNOW_INSTANCE_URL: {{ .Values.connectors.serviceNow.instanceUrl | quote }}
+  SNOW_USERNAME: {{ .Values.connectors.serviceNow.username | quote }}
+  {{- end }}
+  {{- if .Values.connectors.confluence.enabled }}
+  CONFLUENCE_BASE_URL: {{ .Values.connectors.confluence.baseUrl | quote }}
+  CONFLUENCE_USERNAME: {{ .Values.connectors.confluence.username | quote }}
+  {{- end }}
+  {{- if .Values.connectors.dynatrace.enabled }}
+  DYNATRACE_BASE_URL: {{ .Values.connectors.dynatrace.baseUrl | quote }}
+  {{- end }}
+  {{- if .Values.connectors.elasticsearch.enabled }}
+  ELASTICSEARCH_URL: {{ .Values.connectors.elasticsearch.url | quote }}
+  {{- end }}
+  {{- if .Values.connectors.teams.enabled }}
+  TEAMS_WEBHOOK_URL: {{ .Values.connectors.teams.webhookUrl | quote }}
+  {{- end }}
+  {{- if .Values.connectors.email.enabled }}
+  SMTP_HOST: {{ .Values.connectors.email.host | quote }}
+  SMTP_PORT: {{ .Values.connectors.email.port | quote }}
+  SMTP_USERNAME: {{ .Values.connectors.email.username | quote }}
+  SMTP_FROM_EMAIL: {{ .Values.connectors.email.fromEmail | quote }}
+  {{- end }}

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: opsbrain-collector
+description: OpsBrain metric collection agent — deploy in every monitored Kubernetes cluster
+type: application
+version: 1.0.0
+appVersion: "0.97.0"
+dependencies:
+  - name: opentelemetry-collector
+    version: "0.73.*"
+    repository: "https://open-telemetry.github.io/opentelemetry-helm-charts"

@@ -1,0 +1,110 @@
+{{- define "opsbrain.envFrom" -}}
+envFrom:
+  - configMapRef:
+      name: {{ include "opsbrain.fullname" . }}-config
+  - secretRef:
+      name: {{ if .Values.auth.existingSecret }}{{ .Values.auth.existingSecret }}{{ else }}{{ include "opsbrain.fullname" . }}-secret{{ end }}
+{{- end }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "opsbrain.fullname" . }}-backend
+  labels:
+    app: opsbrain-backend
+    version: {{ .Chart.AppVersion }}
+spec:
+  replicas: {{ .Values.replicaCount.backend }}
+  selector:
+    matchLabels:
+      app: opsbrain-backend
+  template:
+    metadata:
+      labels:
+        app: opsbrain-backend
+        version: {{ .Chart.AppVersion }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: backend
+          image: "{{ .Values.global.imageRegistry }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag }}"
+          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          ports:
+            - containerPort: 8010
+          {{- include "opsbrain.envFrom" . | nindent 10 }}
+          resources:
+            {{- toYaml .Values.resources.backend | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8010
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8010
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "opsbrain.fullname" . }}-frontend
+  labels:
+    app: opsbrain-frontend
+    version: {{ .Chart.AppVersion }}
+spec:
+  replicas: {{ .Values.replicaCount.frontend }}
+  selector:
+    matchLabels:
+      app: opsbrain-frontend
+  template:
+    metadata:
+      labels:
+        app: opsbrain-frontend
+        version: {{ .Chart.AppVersion }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: frontend
+          image: "{{ .Values.global.imageRegistry }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.image.frontend.repository }}:{{ .Values.image.frontend.tag }}"
+          imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          ports:
+            - containerPort: 3010
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: "http://{{ include "opsbrain.fullname" . }}-backend:8010"
+          resources:
+            {{- toYaml .Values.resources.frontend | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3010
+            initialDelaySeconds: 15
+            periodSeconds: 15

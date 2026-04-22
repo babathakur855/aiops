@@ -9,3 +9,14 @@ venv/
 node_modules/
 .DS_Store
 *.log
+
+# SQLite database (persisted via Docker named volume in production)
+backend/data/*.db
+backend/data/knowledge/
+
+# Next.js build output
+frontend/.next/
+frontend/out/
+
+# Claude internal files
+.claude/

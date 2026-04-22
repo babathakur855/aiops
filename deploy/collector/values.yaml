@@ -1,0 +1,68 @@
+# ================================================================
+# OpsBrain Collector — values for OpenTelemetry Collector DaemonSet
+# Deploy this in EVERY cluster you want OpsBrain to monitor.
+#
+# Usage:
+#   helm install opsbrain-collector ./deploy/collector \
+#     --set opsbrain.endpoint=https://opsbrain.internal:8011 \
+#     --set opsbrain.envId=prod-eks-us-east-1 \
+#     -n opsbrain-collector --create-namespace
+# ================================================================
+
+# ── OpsBrain connection ───────────────────────────────────────────
+opsbrain:
+  endpoint: "https://opsbrain.internal:8011"  # OpsBrain backend URL (internal/VPN)
+  envId: "my-cluster"                          # Unique ID for this environment in OpsBrain
+  tlsSkipVerify: false                         # Set true only for self-signed certs in lab
+
+# ── What to collect ───────────────────────────────────────────────
+collect:
+  # IaaS — node and pod metrics
+  nodeMetrics: true          # CPU, memory, disk per node (node-exporter)
+  podMetrics: true           # CPU, memory per pod/container (cAdvisor)
+  kubeStateMetrics: true     # Deployment replicas, pod status, HPA
+
+  # App / trace metrics
+  prometheusEndpoints: true  # Scrape Prometheus /metrics from annotated pods
+  traces: false              # OTLP traces (enable if apps instrument with OTel SDK)
+  logs: false                # Container logs (can be high volume — disable if using Loki)
+
+  # Intervals
+  scrapeIntervalSeconds: 60
+  exportIntervalSeconds: 60
+
+# ── Deployment ────────────────────────────────────────────────────
+mode: daemonset              # daemonset = one agent per node (recommended)
+                             # deployment = single agent (lower resource, less complete)
+
+nameOverride: "opsbrain-collector"
+
+# Resources per collector pod
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# RBAC — read-only cluster access
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: opsbrain-collector
+
+# ── Additional scrape targets ─────────────────────────────────────
+# Add custom Prometheus endpoints to scrape
+extraScrapeTargets: []
+# - name: my-app
+#   url: http://my-app.my-namespace.svc.cluster.local:8080/metrics
+
+# ── SaaS / HTTP health checks ─────────────────────────────────────
+saasHealthChecks: []
+# - name: "Production API"
+#   url: "https://api.mycompany.com/health"
+#   expectedStatus: 200
+#   intervalSeconds: 60

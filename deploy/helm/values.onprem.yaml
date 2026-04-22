@@ -1,0 +1,31 @@
+# ================================================================
+# OpsBrain — On-premises / air-gapped overrides (OpenShift, VMware)
+# Usage: helm install opsbrain ./helm -f values.yaml -f values.onprem.yaml
+# ================================================================
+
+llm:
+  provider: ollama             # Fully air-gapped — no external API calls
+  ollama:
+    baseUrl: http://ollama.opsbrain.svc.cluster.local:11434
+    model: llama3.1:70b        # or mistral:7b for lower resource usage
+
+ingress:
+  className: haproxy           # OpenShift default; or nginx for vanilla k8s
+  annotations:
+    haproxy.router.openshift.io/timeout: 300s
+
+# OpenShift-specific security — routes instead of ingress
+openshift:
+  enabled: true
+  routeHostname: opsbrain.apps.cluster.internal
+
+# Tighter pod security for regulated environments
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  fsGroup: 0                   # OpenShift assigns random GID
+
+global:
+  storageClass: thin           # vSphere default; change to your SC
+  imagePullSecrets:
+    - name: registry-secret    # Internal registry credentials

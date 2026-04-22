@@ -1,0 +1,14 @@
+apiVersion: v2
+name: opsbrain
+description: AI-Native AIOps Platform — plug-and-play deployment on any Kubernetes provider
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - aiops
+  - observability
+  - sre
+  - finops
+  - kubernetes
+maintainers:
+  - name: OpsBrain

@@ -1,0 +1,191 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-otel-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.yaml: |
+    receivers:
+      # ── IaaS: Node metrics via Prometheus node-exporter ─────────
+      {{- if .Values.collect.nodeMetrics }}
+      prometheus/nodes:
+        config:
+          scrape_configs:
+            - job_name: node-exporter
+              scrape_interval: {{ .Values.collect.scrapeIntervalSeconds }}s
+              kubernetes_sd_configs:
+                - role: endpoints
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_endpoints_name]
+                  regex: node-exporter
+                  action: keep
+      {{- end }}
+
+      # ── IaaS: Pod/container metrics via cAdvisor ─────────────────
+      {{- if .Values.collect.podMetrics }}
+      kubeletstats:
+        collection_interval: {{ .Values.collect.scrapeIntervalSeconds }}s
+        auth_type: serviceAccount
+        endpoint: "${K8S_NODE_IP}:10250"
+        insecure_skip_verify: true
+        metric_groups:
+          - node
+          - pod
+          - container
+          - volume
+      {{- end }}
+
+      # ── PaaS: kube-state-metrics (deployments, HPAs, PVCs) ───────
+      {{- if .Values.collect.kubeStateMetrics }}
+      prometheus/ksm:
+        config:
+          scrape_configs:
+            - job_name: kube-state-metrics
+              scrape_interval: {{ .Values.collect.scrapeIntervalSeconds }}s
+              kubernetes_sd_configs:
+                - role: endpoints
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_endpoints_name]
+                  regex: kube-state-metrics
+                  action: keep
+      {{- end }}
+
+      # ── App: Prometheus /metrics endpoints (annotated pods) ──────
+      {{- if .Values.collect.prometheusEndpoints }}
+      prometheus/apps:
+        config:
+          scrape_configs:
+            - job_name: annotated-pods
+              scrape_interval: {{ .Values.collect.scrapeIntervalSeconds }}s
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: "true"
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  target_label: __metrics_path__
+                  regex: (.+)
+                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  regex: ([^:]+)(?::\d+)?;(\d+)
+                  replacement: $1:$2
+                  target_label: __address__
+      {{- end }}
+
+      # ── OTLP receiver (for apps that push traces/metrics) ────────
+      {{- if .Values.collect.traces }}
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+      {{- end }}
+
+      # ── Kubernetes events ─────────────────────────────────────────
+      k8s_events:
+        auth_type: serviceAccount
+        namespaces: []  # empty = all namespaces
+
+    processors:
+      # Add k8s metadata to all metrics
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+            - k8s.pod.name
+            - k8s.namespace.name
+            - k8s.deployment.name
+            - k8s.node.name
+            - k8s.pod.uid
+
+      # Add cluster/environment labels
+      resource:
+        attributes:
+          - key: opsbrain.env_id
+            value: {{ .Values.opsbrain.envId | quote }}
+            action: insert
+          - key: k8s.cluster.name
+            value: {{ .Values.opsbrain.envId | quote }}
+            action: insert
+
+      # Drop high-cardinality metrics to reduce noise
+      filter/drop_noisy:
+        metrics:
+          exclude:
+            match_type: regexp
+            metric_names:
+              - ".*_bucket"     # histogram buckets (too many series)
+              - "go_gc_.*"      # Go runtime internals
+              - "go_memstats_.*"
+
+      batch:
+        send_batch_size: 1000
+        timeout: {{ .Values.collect.exportIntervalSeconds }}s
+
+    exporters:
+      # ── Push to OpsBrain OTLP endpoint ───────────────────────────
+      otlphttp/opsbrain:
+        endpoint: {{ .Values.opsbrain.endpoint }}/v1
+        headers:
+          X-OpsBrain-Env-ID: {{ .Values.opsbrain.envId | quote }}
+        tls:
+          insecure_skip_verify: {{ .Values.opsbrain.tlsSkipVerify }}
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 60s
+          max_elapsed_time: 300s
+
+      # Debug: log to stdout (disable in production)
+      logging:
+        verbosity: normal
+        sampling_initial: 5
+        sampling_thereafter: 100
+
+    service:
+      pipelines:
+        metrics:
+          receivers:
+            {{- if .Values.collect.nodeMetrics }}
+            - prometheus/nodes
+            {{- end }}
+            {{- if .Values.collect.podMetrics }}
+            - kubeletstats
+            {{- end }}
+            {{- if .Values.collect.kubeStateMetrics }}
+            - prometheus/ksm
+            {{- end }}
+            {{- if .Values.collect.prometheusEndpoints }}
+            - prometheus/apps
+            {{- end }}
+          processors:
+            - k8sattributes
+            - resource
+            - filter/drop_noisy
+            - batch
+          exporters:
+            - otlphttp/opsbrain
+        logs:
+          receivers:
+            - k8s_events
+          processors:
+            - k8sattributes
+            - resource
+            - batch
+          exporters:
+            - otlphttp/opsbrain
+        {{- if .Values.collect.traces }}
+        traces:
+          receivers:
+            - otlp
+          processors:
+            - k8sattributes
+            - resource
+            - batch
+          exporters:
+            - otlphttp/opsbrain
+        {{- end }}
