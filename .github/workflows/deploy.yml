@@ -28,6 +28,10 @@ jobs:
             DEPLOY_PATH="/root/use-cases/aiops"
             REPO="https://github.com/babathakur855/aiops.git"
             VPS_HOST="${{ secrets.VPS_HOST }}"
+            VPS_DOMAIN="${{ secrets.VPS_DOMAIN }}"
+
+            # Fall back to raw IP if no domain configured
+            PUBLIC_HOST="${VPS_DOMAIN:-$VPS_HOST}"
 
             # ── Clone or pull ──────────────────────────────────────────────
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
@@ -42,7 +46,6 @@ jobs:
             git reset --hard origin/main
 
             # ── Build .env ─────────────────────────────────────────────────
-            # Start from shared .env.common if project .env is missing
             if [ ! -f .env ]; then
               if [ -f /root/use-cases/.env.common ]; then
                 echo "==> Copying shared .env.common..."
@@ -53,26 +56,34 @@ jobs:
               fi
             fi
 
-            # Ensure NEXT_PUBLIC_API_URL uses VPS public IP (browser-accessible)
+            # Determine protocol (https if SSL cert already exists)
+            if [ -n "$VPS_DOMAIN" ] && [ -f "/etc/letsencrypt/live/${VPS_DOMAIN}/fullchain.pem" ]; then
+              PROTOCOL="https"
+              WS_PROTOCOL="wss"
+            else
+              PROTOCOL="http"
+              WS_PROTOCOL="ws"
+            fi
+
+            # Set API / WS URLs using domain (browser-accessible)
             grep -q "^NEXT_PUBLIC_API_URL=" .env && \
-              sed -i "s|^NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=http://${VPS_HOST}:8011|" .env || \
-              echo "NEXT_PUBLIC_API_URL=http://${VPS_HOST}:8011" >> .env
+              sed -i "s|^NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=${PROTOCOL}://${PUBLIC_HOST}|" .env || \
+              echo "NEXT_PUBLIC_API_URL=${PROTOCOL}://${PUBLIC_HOST}" >> .env
 
             grep -q "^NEXT_PUBLIC_WS_URL=" .env && \
-              sed -i "s|^NEXT_PUBLIC_WS_URL=.*|NEXT_PUBLIC_WS_URL=ws://${VPS_HOST}:8011|" .env || \
-              echo "NEXT_PUBLIC_WS_URL=ws://${VPS_HOST}:8011" >> .env
+              sed -i "s|^NEXT_PUBLIC_WS_URL=.*|NEXT_PUBLIC_WS_URL=${WS_PROTOCOL}://${PUBLIC_HOST}|" .env || \
+              echo "NEXT_PUBLIC_WS_URL=${WS_PROTOCOL}://${PUBLIC_HOST}" >> .env
 
             echo "==> .env configured:"
             grep -E "^NEXT_PUBLIC_|^ANTHROPIC_API_KEY" .env | sed 's/=.*/=***/'
 
             # ── Build and deploy ───────────────────────────────────────────
-            echo "==> Building containers (this takes 3-5 min on first run)..."
+            echo "==> Building containers (3-5 min on first run)..."
             docker compose build
 
             echo "==> Starting services..."
             docker compose up -d
 
-            # Remove dangling images to free disk space
             docker image prune -f
 
             # ── Health checks ──────────────────────────────────────────────
@@ -81,7 +92,6 @@ jobs:
 
             docker compose ps
 
-            # Backend health
             for i in 1 2 3 4 5; do
               if curl -sf http://localhost:8011/health > /dev/null 2>&1; then
                 echo "✅ Backend healthy"
@@ -91,7 +101,6 @@ jobs:
               sleep 10
             done
 
-            # Frontend health
             for i in 1 2 3; do
               if curl -sf http://localhost:3010 > /dev/null 2>&1; then
                 echo "✅ Frontend healthy"
@@ -101,12 +110,104 @@ jobs:
               sleep 15
             done
 
+            # ── Nginx reverse proxy ────────────────────────────────────────
+            if [ -n "$VPS_DOMAIN" ]; then
+              echo "==> Setting up Nginx reverse proxy for ${VPS_DOMAIN}..."
+
+              # Install Nginx + Certbot if missing
+              if ! command -v nginx &> /dev/null; then
+                apt-get update -q
+                apt-get install -y nginx certbot python3-certbot-nginx
+              elif ! command -v certbot &> /dev/null; then
+                apt-get update -q
+                apt-get install -y certbot python3-certbot-nginx
+              fi
+
+              # Write Nginx config
+              cat > /etc/nginx/sites-available/opsbrain << 'NGINXEOF'
+            server {
+                listen 80;
+                server_name DOMAIN_PLACEHOLDER;
+
+                client_max_body_size 50M;
+
+                # Backend routes (API, auth, setup, health, WebSocket)
+                location ~ ^/(api|auth|setup|health|docs|openapi\.json)(/|$) {
+                    proxy_pass http://127.0.0.1:8011;
+                    proxy_http_version 1.1;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                    proxy_read_timeout 300s;
+                    proxy_connect_timeout 60s;
+                }
+
+                # WebSocket upgrade
+                location /ws {
+                    proxy_pass http://127.0.0.1:8011;
+                    proxy_http_version 1.1;
+                    proxy_set_header Upgrade $http_upgrade;
+                    proxy_set_header Connection "upgrade";
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                    proxy_read_timeout 3600s;
+                }
+
+                # Frontend (Next.js)
+                location / {
+                    proxy_pass http://127.0.0.1:3010;
+                    proxy_http_version 1.1;
+                    proxy_set_header Upgrade $http_upgrade;
+                    proxy_set_header Connection "upgrade";
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                }
+            }
+            NGINXEOF
+
+              # Substitute domain placeholder
+              sed -i "s/DOMAIN_PLACEHOLDER/${VPS_DOMAIN}/g" /etc/nginx/sites-available/opsbrain
+
+              # Enable site, remove default
+              ln -sf /etc/nginx/sites-available/opsbrain /etc/nginx/sites-enabled/opsbrain
+              rm -f /etc/nginx/sites-enabled/default
+
+              # Test and reload Nginx
+              nginx -t && (systemctl reload nginx 2>/dev/null || systemctl start nginx)
+              echo "✅ Nginx configured for ${VPS_DOMAIN}"
+
+              # ── SSL certificate via Let's Encrypt ──────────────────────
+              if [ ! -f "/etc/letsencrypt/live/${VPS_DOMAIN}/fullchain.pem" ]; then
+                echo "==> Obtaining SSL certificate for ${VPS_DOMAIN}..."
+                certbot --nginx -d "${VPS_DOMAIN}" \
+                  --non-interactive --agree-tos \
+                  -m "admin@${VPS_DOMAIN}" \
+                  --redirect \
+                  && echo "✅ SSL certificate obtained — site now HTTPS" \
+                  || echo "⚠️  SSL setup failed — running on HTTP (check DNS is pointed to this server)"
+              else
+                echo "==> Renewing SSL certificate if needed..."
+                certbot renew --quiet || true
+                echo "✅ SSL certificate valid"
+              fi
+            else
+              echo "⚠️  VPS_DOMAIN secret not set — skipping Nginx/SSL setup (using raw ports)"
+            fi
+
             echo ""
             echo "════════════════════════════════════════════════"
             echo "  ✅ DEPLOYED: OpsBrain AIOps Platform"
-            echo "  Frontend : http://${VPS_HOST}:3010"
-            echo "  Backend  : http://${VPS_HOST}:8011"
-            echo "  API Docs : http://${VPS_HOST}:8011/docs"
+            if [ -n "$VPS_DOMAIN" ]; then
+              echo "  Site     : https://${VPS_DOMAIN}"
+              echo "  API Docs : https://${VPS_DOMAIN}/docs"
+            fi
+            echo "  Frontend : http://${VPS_HOST}:3010  (direct)"
+            echo "  Backend  : http://${VPS_HOST}:8011  (direct)"
             echo "════════════════════════════════════════════════"
 
   summary:
@@ -125,6 +226,7 @@ jobs:
           echo "| Status   | \`$STATUS\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Branch   | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit   | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Frontend | \`http://VPS_HOST:3010\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Backend  | \`http://VPS_HOST:8011\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| API Docs | \`http://VPS_HOST:8011/docs\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Site     | \`https://${{ secrets.VPS_DOMAIN }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| API Docs | \`https://${{ secrets.VPS_DOMAIN }}/docs\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | \`http://${{ secrets.VPS_HOST }}:3010\` (direct) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend  | \`http://${{ secrets.VPS_HOST }}:8011\` (direct) |" >> $GITHUB_STEP_SUMMARY
