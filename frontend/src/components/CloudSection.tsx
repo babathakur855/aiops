@@ -50,13 +50,15 @@ const HOSTING_FIELDS: Record<CloudKey, { key: string; label: string; type: strin
         { value: "irsa", label: "IRSA — Pod Identity (EKS, recommended)" },
         { value: "instance_profile", label: "EC2 Instance Profile" },
         { value: "ecs_task_role", label: "ECS Task Role" },
+        { value: "aws_profile", label: "AWS CLI Profile — local / on-prem" },
       ],
-      help: "OpsBrain pod inherits this identity automatically — no static credentials stored",
+      help: "How OpsBrain authenticates as an AWS workload. Running locally? Use AWS CLI Profile or leave this section unconfigured and add accounts under Data Sources.",
     },
     { key: "region", label: "AWS Region", type: "text", placeholder: "us-east-1" },
     { key: "account_id", label: "AWS Account ID", type: "text", placeholder: "123456789012", help: "For display and audit purposes" },
-    { key: "eks_cluster", label: "EKS Cluster Name", type: "text", placeholder: "my-eks-cluster", help: "The cluster OpsBrain is deployed on" },
+    { key: "eks_cluster", label: "EKS Cluster Name", type: "text", placeholder: "my-eks-cluster", help: "The cluster OpsBrain is deployed on", showIf: "irsa" },
     { key: "irsa_role_arn", label: "IRSA Role ARN", type: "text", placeholder: "arn:aws:iam::123456789012:role/OpsBrainRole", help: "Annotate the OpsBrain k8s ServiceAccount with this role ARN", showIf: "irsa" },
+    { key: "profile_name", label: "AWS CLI Profile Name", type: "text", placeholder: "default", help: "Named profile from ~/.aws/credentials or ~/.aws/config — leave blank for [default]", showIf: "aws_profile" },
   ],
   azure: [
     {
@@ -492,16 +494,16 @@ export function CloudSection({ get, post, del, isAdmin }: {
         <div className="flex items-start gap-3">
           <span className="text-xl">🏠</span>
           <div>
-            <span className="text-white font-medium">Hosting Cloud</span> — where OpsBrain itself is deployed.
-            Uses platform identity (IRSA / Managed Identity / Workload Identity). <span className="text-indigo-300">No static credentials stored.</span>
+            <span className="text-white font-medium">Hosting Cloud</span> — where OpsBrain itself runs.
+            Only configure this if OpsBrain is deployed <span className="text-indigo-300">inside</span> a cloud platform (EKS → IRSA, EC2 → Instance Profile, ECS → Task Role).{" "}
+            <span className="text-slate-500">Running locally or in Docker? Leave this blank — add accounts under Data Sources instead.</span>
           </div>
         </div>
         <div className="flex items-start gap-3">
           <span className="text-xl">📡</span>
           <div>
-            <span className="text-white font-medium">Data Sources</span> — cloud accounts OpsBrain monitors.
-            Can be <span className="text-indigo-300">any cloud, any number of accounts</span>, regardless of hosting cloud.
-            E.g. OpsBrain on AWS can monitor Azure + GCP + multiple AWS accounts simultaneously.
+            <span className="text-white font-medium">Data Sources</span> — cloud accounts OpsBrain monitors (access keys go here).
+            Supports <span className="text-indigo-300">any cloud, any number of accounts</span>, regardless of where OpsBrain is hosted.
           </div>
         </div>
       </div>
@@ -527,7 +529,7 @@ export function CloudSection({ get, post, del, isAdmin }: {
 
         {!showHostingForm && !hostingCloud && (
           <div className="text-xs text-slate-500 italic py-2">
-            Not configured — OpsBrain is likely running on-premises or in Docker. Click Configure to set a hosting cloud.
+            Not configured — OpsBrain is running locally or in Docker. This is fine. Add your AWS/Azure/GCP accounts under <span className="text-slate-400">Data Sources</span> below to start monitoring them.
           </div>
         )}
 

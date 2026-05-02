@@ -30,6 +30,7 @@ AWS_REQUIRED_POLICY = {
                 "eks:Describe*",
                 "eks:List*",
                 "cloudwatch:GetMetricData",
+                "cloudwatch:GetMetricStatistics",
                 "cloudwatch:DescribeAlarms",
                 "cloudwatch:ListMetrics",
                 "logs:FilterLogEvents",
@@ -88,6 +89,7 @@ class AWSConnector(BaseConnector):
         self.external_id = cfg.get("external_id", "")
         self.access_key_id = cfg.get("access_key_id", "")
         self.secret_access_key = cfg.get("secret_access_key", "")
+        self.profile_name = cfg.get("profile_name", "")
         self.bedrock_model_id = cfg.get("bedrock_model_id", "anthropic.claude-3-5-sonnet-20241022-v2:0")
         self._session: Any = None
 
@@ -118,7 +120,13 @@ class AWSConnector(BaseConnector):
                 region_name=self.region,
             )
 
-        # instance_profile / IRSA — boto3 finds credentials automatically
+        if self.auth_method == "aws_profile":
+            return boto3.Session(
+                profile_name=self.profile_name or None,
+                region_name=self.region,
+            )
+
+        # instance_profile / irsa / ecs_task_role — boto3 credential chain handles it
         return boto3.Session(region_name=self.region)
 
     def _session_or_new(self) -> Any:

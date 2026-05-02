@@ -164,13 +164,25 @@ async def collect_all() -> dict[str, Any]:
     return summary
 
 
+_DIMENSION_PRIORITY = (
+    "InstanceId", "DBInstanceIdentifier", "FunctionName", "QueueName",
+    "LoadBalancer", "ClusterName", "CacheClusterId", "ApiName",
+)
+
+_MAX_RESOURCES_PER_METRIC = 20  # avoid runaway API calls on large accounts
+
+
 async def _collect_aws(env_id: str, env_name: str, connector: Any) -> dict:
-    """Collect IaaS + PaaS metrics from AWS CloudWatch."""
+    """Collect IaaS + PaaS metrics from AWS CloudWatch.
+
+    Uses list_metrics to discover per-resource dimensions first, then queries
+    each resource individually. Without dimensions CloudWatch returns no
+    datapoints for instance-scoped metrics (EC2, RDS, Lambda, etc.).
+    """
     collected = 0
     errors = []
 
     def _fetch_cw_metrics():
-        import boto3
         session = connector._session_or_new()
         cw = session.client("cloudwatch")
         now = datetime.utcnow()
@@ -179,22 +191,48 @@ async def _collect_aws(env_id: str, env_name: str, connector: Any) -> dict:
 
         for namespace, metric_name, unit in AWS_IAAS_METRICS + AWS_PAAS_METRICS:
             try:
-                resp = cw.get_metric_statistics(
-                    Namespace=namespace,
-                    MetricName=metric_name,
-                    StartTime=start,
-                    EndTime=now,
-                    Period=300,
-                    Statistics=["Average"],
+                # Discover all instances of this metric with their dimensions
+                paginator = cw.get_paginator("list_metrics")
+                discovered = []
+                for page in paginator.paginate(Namespace=namespace, MetricName=metric_name):
+                    discovered.extend(page.get("Metrics", []))
+                    if len(discovered) >= _MAX_RESOURCES_PER_METRIC:
+                        break
+                discovered = discovered[:_MAX_RESOURCES_PER_METRIC]
+
+                # If no dimensions found the metric doesn't exist in this account
+                if not discovered:
+                    continue
+
+                service_label = (
+                    namespace.replace("AWS/", "")
+                    .replace("ContainerInsights", "k8s")
+                    .lower()
                 )
-                for dp in resp.get("Datapoints", []):
-                    metrics.append({
-                        "service": namespace.replace("AWS/", "").replace("ContainerInsights", "k8s").lower(),
-                        "metric": metric_name.lower().replace(" ", "_"),
-                        "value": dp["Average"],
-                        "timestamp": dp["Timestamp"].isoformat(),
-                        "labels": {"unit": unit, "namespace": namespace},
-                    })
+
+                for metric_def in discovered:
+                    dimensions = metric_def.get("Dimensions", [])
+                    resource_id = next(
+                        (d["Value"] for d in dimensions if d["Name"] in _DIMENSION_PRIORITY),
+                        "aggregate",
+                    )
+                    resp = cw.get_metric_statistics(
+                        Namespace=namespace,
+                        MetricName=metric_name,
+                        Dimensions=dimensions,
+                        StartTime=start,
+                        EndTime=now,
+                        Period=300,
+                        Statistics=["Average"],
+                    )
+                    for dp in resp.get("Datapoints", []):
+                        metrics.append({
+                            "service": service_label,
+                            "metric": metric_name.lower().replace(" ", "_"),
+                            "value": dp["Average"],
+                            "timestamp": dp["Timestamp"].isoformat(),
+                            "labels": {"unit": unit, "namespace": namespace, "resource": resource_id},
+                        })
             except Exception as e:
                 errors.append(f"{namespace}/{metric_name}: {e}")
 
