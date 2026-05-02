@@ -17,7 +17,7 @@ import { EnvironmentsPage } from "@/components/EnvironmentsPage";
 import ReactMarkdown from "react-markdown";
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8011";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 // ─── Demo data — pre-populates every tab for instant showcase ─────
 const _now = () => new Date().toISOString();

@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8011";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface KnowledgeDoc {
