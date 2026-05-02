@@ -8,13 +8,12 @@ RUN npm ci
 
 COPY . .
 
-# Accept VPS public hostname/IP at build time so the browser can reach the backend
-ARG NEXT_PUBLIC_API_URL=http://localhost:8011
-ARG NEXT_PUBLIC_WS_URL=ws://localhost:8011
+ARG NEXT_PUBLIC_API_URL=
+ARG NEXT_PUBLIC_WS_URL=
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 
-RUN npm run build
+RUN mkdir -p public && npm run build
 
 # ── Stage 2: run (minimal image, standalone output) ───────────────
 FROM node:20-alpine AS runner
