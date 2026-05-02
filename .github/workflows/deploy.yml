@@ -53,10 +53,14 @@ jobs:
               fi
             fi
 
-            # Inject VPS_DOMAIN so docker-compose Traefik labels resolve
+            # Inject secrets into .env
             grep -q "^VPS_DOMAIN=" .env && \
               sed -i "s|^VPS_DOMAIN=.*|VPS_DOMAIN=${VPS_DOMAIN}|" .env || \
               echo "VPS_DOMAIN=${VPS_DOMAIN}" >> .env
+
+            grep -q "^ANTHROPIC_API_KEY=" .env && \
+              sed -i "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}|" .env || \
+              echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
 
             echo "==> .env configured:"
             grep -E "^VPS_DOMAIN=|^ANTHROPIC_API_KEY" .env | sed 's/=.*/=***/'
